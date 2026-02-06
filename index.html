@@ -2,26 +2,25 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Jedi vs Sith: Starship Duel</title>
+    <title>Neon Stick Duel: Best of Three</title>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; font-family: 'Courier New', Courier, monospace; }
-        canvas { display: block; margin: auto; border: 4px solid #333; }
-        #ui { position: absolute; top: 20px; width: 100%; display: flex; justify-content: space-around; color: white; text-shadow: 2px 2px #000; pointer-events: none; }
-        .health-bar { width: 300px; height: 20px; border: 2px solid #fff; background: #500; }
-        .health-fill { height: 100%; background: #f00; transition: width 0.2s; }
-        #player-health { background: #0f0; }
-        #msg { position: absolute; top: 50%; width: 100%; text-align: center; color: yellow; font-size: 3rem; display: none; }
-        #score { position: absolute; top: 60px; width: 100%; text-align: center; color: white; font-size: 1.5rem; }
+        body { margin: 0; background: #050505; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        canvas { display: block; margin: auto; }
+        #ui { position: absolute; top: 20px; width: 100%; display: flex; justify-content: space-around; color: white; pointer-events: none; }
+        .health-bar { width: 300px; height: 12px; border: 1px solid #444; background: #222; border-radius: 10px; overflow: hidden; margin-top: 5px; }
+        .health-fill { height: 100%; transition: width 0.3s ease-out; box-shadow: 0 0 10px currentColor; }
+        #score { position: absolute; top: 70px; width: 100%; text-align: center; color: #aaa; font-size: 1.2rem; letter-spacing: 2px; }
+        #msg { position: absolute; top: 40%; width: 100%; text-align: center; color: #fff; font-size: 4rem; display: none; font-weight: bold; text-shadow: 0 0 20px #fff; }
     </style>
 </head>
 <body>
 
 <div id="ui">
-    <div>JEDI (P1)<div class="health-bar"><div id="player-health" class="health-fill" style="width: 100%;"></div></div></div>
-    <div>SITH (CPU)<div class="health-bar"><div id="enemy-health" class="health-fill" style="width: 100%;"></div></div></div>
+    <div>JEDI<div class="health-bar"><div id="p1-hp" class="health-fill" style="width: 100%; color: #0ff; background: #0ff;"></div></div></div>
+    <div>SITH<div class="health-bar"><div id="p2-hp" class="health-fill" style="width: 100%; color: #f00; background: #f00;"></div></div></div>
 </div>
-<div id="score">Bouts: Player 0 - 0 Computer</div>
-<div id="msg">ROUND START</div>
+<div id="score">BOUTS: 0 - 0</div>
+<div id="msg">ROUND 1</div>
 
 <canvas id="gameCanvas"></canvas>
 
@@ -31,204 +30,225 @@ const ctx = canvas.getContext('2d');
 const msgEl = document.getElementById('msg');
 const scoreEl = document.getElementById('score');
 
-canvas.width = 1000;
-canvas.height = 500;
+canvas.width = window.innerWidth;
+canvas.height = 600;
 
-// Game State
+let p1Wins = 0;
+let cpuWins = 0;
 let gameState = "PLAYING";
-let playerWins = 0;
-let enemyWins = 0;
-const gravity = 0.8;
+let particles = [];
 
 class Fighter {
     constructor(x, color, isPlayer) {
         this.x = x;
-        this.y = 300;
-        this.width = 50;
-        this.height = 100;
+        this.y = 450;
+        this.baseY = 450;
         this.color = color;
+        this.isPlayer = isPlayer;
         this.hp = 100;
         this.vx = 0;
         this.vy = 0;
-        this.isJumping = false;
-        this.isPlayer = isPlayer;
-        this.attackType = null; // 'swing', 'thrust', 'kick'
-        this.attackFrames = 0;
         this.facing = isPlayer ? 1 : -1;
+        this.attackType = null;
+        this.timer = 0;
+        this.history = []; // For sword trails
     }
 
     draw() {
-        // Draw Character
-        ctx.fillStyle = this.color;
-        ctx.fillRect(this.x, this.y, this.width, this.height);
+        const headY = this.y - 80;
+        const bodyY = this.y - 40;
         
-        // Draw Saber
-        if (this.attackType) {
-            ctx.lineWidth = 5;
-            ctx.shadowBlur = 15;
-            ctx.shadowColor = this.isPlayer ? "cyan" : "red";
+        ctx.strokeStyle = "white";
+        ctx.lineWidth = 4;
+        ctx.lineCap = "round";
+
+        // Head
+        ctx.beginPath();
+        ctx.arc(this.x, headY, 10, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Spine
+        ctx.beginPath();
+        ctx.moveTo(this.x, headY + 10);
+        ctx.lineTo(this.x, this.y - 20);
+        ctx.stroke();
+
+        // Legs (simple animation)
+        const walkCycle = Math.sin(Date.now() * 0.01) * 10 * (this.vx !== 0 ? 1 : 0);
+        ctx.beginPath();
+        ctx.moveTo(this.x, this.y - 20);
+        ctx.lineTo(this.x - 15 + walkCycle, this.y); // Left Leg
+        ctx.moveTo(this.x, this.y - 20);
+        ctx.lineTo(this.x + 15 - walkCycle, this.y); // Right Leg
+        ctx.stroke();
+
+        // Sword Logic
+        let swordEnd = { x: this.x + 40 * this.facing, y: bodyY };
+        
+        if (this.attackType === 'swing') {
+            const angle = (this.timer / 20) * Math.PI - (Math.PI/2);
+            swordEnd.x = this.x + Math.cos(angle * this.facing) * 70 * this.facing;
+            swordEnd.y = bodyY + Math.sin(angle) * 70;
+        } else if (this.attackType === 'thrust') {
+            swordEnd.x = this.x + (70 + (20 - this.timer) * 2) * this.facing;
+            swordEnd.y = bodyY;
+        } else if (this.attackType === 'kick') {
             ctx.strokeStyle = "white";
             ctx.beginPath();
-            
-            if (this.attackType === 'swing') {
-                ctx.moveTo(this.x + this.width/2, this.y + 20);
-                ctx.lineTo(this.x + this.width/2 + (60 * this.facing), this.y + 80);
-            } else if (this.attackType === 'thrust') {
-                ctx.moveTo(this.x + this.width/2, this.y + 50);
-                ctx.lineTo(this.x + this.width/2 + (80 * this.facing), this.y + 50);
-            } else if (this.attackType === 'kick') {
-                ctx.fillStyle = "brown";
-                ctx.fillRect(this.x + (this.facing === 1 ? this.width : -30), this.y + 70, 30, 15);
-            }
+            ctx.moveTo(this.x, this.y - 20);
+            ctx.lineTo(this.x + 40 * this.facing, this.y - 30);
             ctx.stroke();
-            ctx.shadowBlur = 0;
         }
+
+        // Add to history for trails
+        this.history.push({...swordEnd});
+        if (this.history.length > 8) this.history.shift();
+
+        // Draw Trails
+        if (this.attackType) {
+            for (let i = 0; i < this.history.length; i++) {
+                ctx.globalAlpha = i / 10;
+                ctx.strokeStyle = this.color;
+                ctx.lineWidth = i * 1.5;
+                ctx.beginPath();
+                ctx.moveTo(this.x, bodyY);
+                ctx.lineTo(this.history[i].x, this.history[i].y);
+                ctx.stroke();
+            }
+        }
+
+        // Draw Main Saber
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = "white";
+        ctx.lineWidth = 4;
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = this.color;
+        ctx.beginPath();
+        ctx.moveTo(this.x, bodyY);
+        ctx.lineTo(swordEnd.x, swordEnd.y);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
     }
 
     update() {
-        this.y += this.vy;
         this.x += this.vx;
-        if (this.y + this.height < canvas.height - 50) this.vy += gravity;
-        else { this.vy = 0; this.y = canvas.height - 50 - this.height; this.isJumping = false; }
-        
-        // Horizontal bounds
-        if (this.x < 0) this.x = 0;
-        if (this.x > canvas.width - this.width) this.x = canvas.width - this.width;
+        this.y += this.vy;
+        if (this.y < this.baseY) this.vy += 0.8; 
+        else { this.y = this.baseY; this.vy = 0; }
 
-        if (this.attackFrames > 0) {
-            this.attackFrames--;
-        } else {
-            this.attackType = null;
-        }
+        if (this.timer > 0) this.timer--;
+        else this.attackType = null;
+
+        // Keep on screen
+        this.x = Math.max(50, Math.min(canvas.width - 50, this.x));
     }
 
     attack(type) {
         if (!this.attackType) {
             this.attackType = type;
-            this.attackFrames = 15;
+            this.timer = 20;
         }
     }
 }
 
-const p1 = new Fighter(100, 'blue', true);
-const cpu = new Fighter(850, 'darkred', false);
-let particles = [];
-
-// Input handling
+const p1 = new Fighter(200, "#00ffff", true);
+const cpu = new Fighter(canvas.width - 200, "#ff0000", false);
 const keys = {};
-window.onkeydown = (e) => keys[e.code] = true;
-window.onkeyup = (e) => keys[e.code] = false;
 
-function handleInput() {
-    if (keys['ArrowLeft']) p1.vx = -5;
-    else if (keys['ArrowRight']) p1.vx = 5;
-    else p1.vx = 0;
+window.onkeydown = e => keys[e.code] = true;
+window.onkeyup = e => keys[e.code] = false;
 
-    if (keys['ArrowUp'] && !p1.isJumping) { p1.vy = -15; p1.isJumping = true; }
-    if (keys['Space']) p1.attack('swing');
-    if (keys['KeyT']) p1.attack('thrust'); // Extra thrust key
-    if (keys['ArrowDown']) p1.attack('kick');
-}
-
-function cpuAI() {
-    const dist = p1.x - cpu.x;
-    if (Math.abs(dist) > 100) cpu.vx = dist > 0 ? 2 : -2;
-    else {
-        cpu.vx = 0;
-        if (Math.random() > 0.95) cpu.attack(Math.random() > 0.5 ? 'swing' : 'kick');
-    }
-}
-
-function checkCollision(a, b) {
-    if (a.attackType && a.attackFrames > 10) {
-        const reach = a.attackType === 'thrust' ? 80 : 50;
-        const hitX = a.facing === 1 ? a.x + a.width : a.x - reach;
-        if (hitX + reach > b.x && hitX < b.x + b.width && a.y < b.y + b.height && a.y + a.height > b.y) {
-            b.hp -= 2;
-            b.x += a.facing * 10; // Knockback
+function checkHit(atkr, vctm) {
+    if (atkr.attackType && atkr.timer > 10) {
+        const dist = Math.abs((atkr.x + (50 * atkr.facing)) - vctm.x);
+        if (dist < 60 && Math.abs(atkr.y - vctm.y) < 80) {
+            vctm.hp -= 1.5;
+            vctm.x += atkr.facing * 5; // knockback
         }
     }
 }
 
-function createFireworks() {
-    for(let i=0; i<100; i++) {
+function spawnFireworks() {
+    for(let i=0; i<80; i++) {
         particles.push({
-            x: canvas.width/2, y: canvas.height/2,
-            vx: (Math.random()-0.5)*10, vy: (Math.random()-0.5)*10,
-            color: `hsl(${Math.random()*360}, 100%, 50%)`,
-            life: 100
+            x: canvas.width/2, y: canvas.height/3,
+            vx: (Math.random()-0.5)*15, vy: (Math.random()-0.5)*15,
+            color: `hsl(${Math.random()*360}, 100%, 60%)`,
+            life: 1.0
         });
     }
 }
 
-function drawBackground() {
-    ctx.fillStyle = "#111";
-    ctx.fillRect(0,0, canvas.width, canvas.height);
-    // Ship walls
-    ctx.strokeStyle = "#444";
-    for(let i=0; i<canvas.width; i+=100) {
-        ctx.strokeRect(i, 0, 100, canvas.height);
-    }
-    // Floor
-    ctx.fillStyle = "#222";
-    ctx.fillRect(0, canvas.height-50, canvas.width, 50);
-}
-
 function resetRound() {
     p1.hp = 100; cpu.hp = 100;
-    p1.x = 100; cpu.x = 850;
+    p1.x = 200; cpu.x = canvas.width - 200;
     gameState = "PLAYING";
     msgEl.style.display = "none";
 }
 
-function gameLoop() {
-    drawBackground();
+function loop() {
+    // Clear & Background
+    ctx.fillStyle = "#050505";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // Draw Ship Hallway
+    ctx.strokeStyle = "#151515";
+    ctx.lineWidth = 2;
+    for(let i=0; i<canvas.width; i+=100) ctx.strokeRect(i, 0, 100, canvas.height);
 
     if (gameState === "PLAYING") {
-        handleInput();
-        cpuAI();
-        p1.update();
-        cpu.update();
-        checkCollision(p1, cpu);
-        checkCollision(cpu, p1);
+        // Player Input
+        p1.vx = keys['ArrowLeft'] ? -5 : keys['ArrowRight'] ? 5 : 0;
+        if (keys['ArrowUp'] && p1.y === p1.baseY) p1.vy = -12;
+        if (keys['Space']) p1.attack('swing');
+        if (keys['ArrowDown']) p1.attack('kick');
+        if (keys['KeyT']) p1.attack('thrust');
+
+        // CPU AI
+        const dist = p1.x - cpu.x;
+        cpu.vx = Math.abs(dist) > 80 ? (dist > 0 ? 3 : -3) : 0;
+        if (Math.abs(dist) < 100 && Math.random() > 0.96) cpu.attack('swing');
+
+        p1.update(); cpu.update();
+        checkHit(p1, cpu); checkHit(cpu, p1);
 
         if (p1.hp <= 0 || cpu.hp <= 0) {
-            gameState = "ROUND_END";
-            if (p1.hp > 0) playerWins++; else enemyWins++;
-            scoreEl.innerText = `Bouts: Player ${playerWins} - ${enemyWins} Computer`;
+            gameState = "END";
+            if (p1.hp > 0) p1Wins++; else cpuWins++;
+            scoreEl.innerText = `BOUTS: ${p1Wins} - ${cpuWins}`;
             
-            if (playerWins === 2 || enemyWins === 2) {
-                gameState = "GAME_OVER";
-                msgEl.innerText = playerWins === 2 ? "JEDI VICTORIOUS!" : "THE DARK SIDE WINS";
-                msgEl.style.display = "block";
-                if(playerWins === 2) createFireworks();
+            if (p1Wins === 2 || cpuWins === 2) {
+                msgEl.innerText = p1Wins === 2 ? "JEDI VICTORIOUS" : "SITH TRIUMPHANT";
+                if(p1Wins === 2) spawnFireworks();
             } else {
                 msgEl.innerText = "ROUND OVER";
-                msgEl.style.display = "block";
                 setTimeout(resetRound, 2000);
             }
+            msgEl.style.display = "block";
         }
     }
 
-    p1.draw();
-    cpu.draw();
+    // Draw Entities
+    p1.draw(); cpu.draw();
 
-    // Health UI
-    document.getElementById('player-health').style.width = p1.hp + "%";
-    document.getElementById('enemy-health').style.width = cpu.hp + "%";
+    // UI
+    document.getElementById('p1-hp').style.width = p1.hp + "%";
+    document.getElementById('p2-hp').style.width = cpu.hp + "%";
 
-    // Fireworks particles
+    // Particles
     particles.forEach((p, i) => {
-        p.x += p.vx; p.y += p.vy; p.life--;
+        p.x += p.vx; p.y += p.vy; p.vy += 0.2; p.life -= 0.02;
         ctx.fillStyle = p.color;
-        ctx.fillRect(p.x, p.y, 4, 4);
-        if(p.life <= 0) particles.splice(i, 1);
+        ctx.globalAlpha = p.life;
+        ctx.fillRect(p.x, p.y, 5, 5);
+        if (p.life <= 0) particles.splice(i, 1);
     });
+    ctx.globalAlpha = 1;
 
-    requestAnimationFrame(gameLoop);
+    requestAnimationFrame(loop);
 }
 
-gameLoop();
+loop();
 </script>
 </body>
 </html>
