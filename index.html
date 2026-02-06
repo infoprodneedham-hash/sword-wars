@@ -2,15 +2,15 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Neon Stick Duel: Best of Three</title>
+    <title>Neon Stick Duel: Facing Off</title>
     <style>
-        body { margin: 0; background: #050505; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { margin: 0; background: #050505; overflow: hidden; font-family: 'Courier New', Courier, monospace; }
         canvas { display: block; margin: auto; }
         #ui { position: absolute; top: 20px; width: 100%; display: flex; justify-content: space-around; color: white; pointer-events: none; }
         .health-bar { width: 300px; height: 12px; border: 1px solid #444; background: #222; border-radius: 10px; overflow: hidden; margin-top: 5px; }
-        .health-fill { height: 100%; transition: width 0.3s ease-out; box-shadow: 0 0 10px currentColor; }
+        .health-fill { height: 100%; transition: width 0.2s ease-out; box-shadow: 0 0 10px currentColor; }
         #score { position: absolute; top: 70px; width: 100%; text-align: center; color: #aaa; font-size: 1.2rem; letter-spacing: 2px; }
-        #msg { position: absolute; top: 40%; width: 100%; text-align: center; color: #fff; font-size: 4rem; display: none; font-weight: bold; text-shadow: 0 0 20px #fff; }
+        #msg { position: absolute; top: 40%; width: 100%; text-align: center; color: #fff; font-size: 4rem; display: none; font-weight: bold; text-shadow: 0 0 20px #fff; z-index: 10; }
     </style>
 </head>
 <body>
@@ -51,10 +51,13 @@ class Fighter {
         this.facing = isPlayer ? 1 : -1;
         this.attackType = null;
         this.timer = 0;
-        this.history = []; // For sword trails
+        this.history = []; 
     }
 
-    draw() {
+    draw(opponent) {
+        // Update facing direction based on opponent position
+        this.facing = (opponent.x > this.x) ? 1 : -1;
+
         const headY = this.y - 80;
         const bodyY = this.y - 40;
         
@@ -73,43 +76,47 @@ class Fighter {
         ctx.lineTo(this.x, this.y - 20);
         ctx.stroke();
 
-        // Legs (simple animation)
-        const walkCycle = Math.sin(Date.now() * 0.01) * 10 * (this.vx !== 0 ? 1 : 0);
+        // Legs
+        const walkCycle = Math.sin(Date.now() * 0.01) * 12 * (this.vx !== 0 ? 1 : 0);
         ctx.beginPath();
         ctx.moveTo(this.x, this.y - 20);
-        ctx.lineTo(this.x - 15 + walkCycle, this.y); // Left Leg
+        ctx.lineTo(this.x - 15 + walkCycle, this.y);
         ctx.moveTo(this.x, this.y - 20);
-        ctx.lineTo(this.x + 15 - walkCycle, this.y); // Right Leg
+        ctx.lineTo(this.x + 15 - walkCycle, this.y);
         ctx.stroke();
 
-        // Sword Logic
+        // Sword Movement
         let swordEnd = { x: this.x + 40 * this.facing, y: bodyY };
         
         if (this.attackType === 'swing') {
-            const angle = (this.timer / 20) * Math.PI - (Math.PI/2);
-            swordEnd.x = this.x + Math.cos(angle * this.facing) * 70 * this.facing;
-            swordEnd.y = bodyY + Math.sin(angle) * 70;
+            // Swing arc adjusted for facing direction
+            const progress = (20 - this.timer) / 20; 
+            const angle = (progress * Math.PI) - (Math.PI / 2);
+            swordEnd.x = this.x + Math.cos(angle) * 80 * this.facing;
+            swordEnd.y = (bodyY - 40) + Math.sin(angle) * 80;
         } else if (this.attackType === 'thrust') {
-            swordEnd.x = this.x + (70 + (20 - this.timer) * 2) * this.facing;
+            const thrustExt = Math.sin((this.timer/20) * Math.PI) * 40;
+            swordEnd.x = this.x + (50 + thrustExt) * this.facing;
             swordEnd.y = bodyY;
         } else if (this.attackType === 'kick') {
             ctx.strokeStyle = "white";
             ctx.beginPath();
             ctx.moveTo(this.x, this.y - 20);
-            ctx.lineTo(this.x + 40 * this.facing, this.y - 30);
+            ctx.lineTo(this.x + 45 * this.facing, this.y - 35);
             ctx.stroke();
         }
 
         // Add to history for trails
         this.history.push({...swordEnd});
-        if (this.history.length > 8) this.history.shift();
+        if (this.history.length > 6) this.history.shift();
 
         // Draw Trails
         if (this.attackType) {
+            ctx.shadowBlur = 0;
             for (let i = 0; i < this.history.length; i++) {
                 ctx.globalAlpha = i / 10;
                 ctx.strokeStyle = this.color;
-                ctx.lineWidth = i * 1.5;
+                ctx.lineWidth = i * 2;
                 ctx.beginPath();
                 ctx.moveTo(this.x, bodyY);
                 ctx.lineTo(this.history[i].x, this.history[i].y);
@@ -137,9 +144,8 @@ class Fighter {
         else { this.y = this.baseY; this.vy = 0; }
 
         if (this.timer > 0) this.timer--;
-        else this.attackType = null;
+        else { this.attackType = null; this.history = []; }
 
-        // Keep on screen
         this.x = Math.max(50, Math.min(canvas.width - 50, this.x));
     }
 
@@ -159,20 +165,25 @@ window.onkeydown = e => keys[e.code] = true;
 window.onkeyup = e => keys[e.code] = false;
 
 function checkHit(atkr, vctm) {
-    if (atkr.attackType && atkr.timer > 10) {
-        const dist = Math.abs((atkr.x + (50 * atkr.facing)) - vctm.x);
-        if (dist < 60 && Math.abs(atkr.y - vctm.y) < 80) {
-            vctm.hp -= 1.5;
-            vctm.x += atkr.facing * 5; // knockback
+    if (atkr.attackType && atkr.timer > 5 && atkr.timer < 18) {
+        const reach = atkr.attackType === 'thrust' ? 90 : 70;
+        const dist = Math.abs(atkr.x - vctm.x);
+        
+        // Only hit if facing the enemy
+        const isFacingEnemy = (atkr.facing === 1 && vctm.x > atkr.x) || (atkr.facing === -1 && vctm.x < atkr.x);
+        
+        if (isFacingEnemy && dist < reach && Math.abs(atkr.y - vctm.y) < 100) {
+            vctm.hp -= 0.8; // Per frame damage during the active window
+            vctm.x += atkr.facing * 3; 
         }
     }
 }
 
 function spawnFireworks() {
-    for(let i=0; i<80; i++) {
+    for(let i=0; i<100; i++) {
         particles.push({
             x: canvas.width/2, y: canvas.height/3,
-            vx: (Math.random()-0.5)*15, vy: (Math.random()-0.5)*15,
+            vx: (Math.random()-0.5)*20, vy: (Math.random()-0.5)*20,
             color: `hsl(${Math.random()*360}, 100%, 60%)`,
             life: 1.0
         });
@@ -187,27 +198,30 @@ function resetRound() {
 }
 
 function loop() {
-    // Clear & Background
     ctx.fillStyle = "#050505";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     
-    // Draw Ship Hallway
-    ctx.strokeStyle = "#151515";
+    // Background details
+    ctx.strokeStyle = "#1a1a1a";
     ctx.lineWidth = 2;
-    for(let i=0; i<canvas.width; i+=100) ctx.strokeRect(i, 0, 100, canvas.height);
+    for(let i=0; i<canvas.width; i+=120) ctx.strokeRect(i, 0, 120, canvas.height);
 
     if (gameState === "PLAYING") {
         // Player Input
-        p1.vx = keys['ArrowLeft'] ? -5 : keys['ArrowRight'] ? 5 : 0;
-        if (keys['ArrowUp'] && p1.y === p1.baseY) p1.vy = -12;
+        p1.vx = keys['ArrowLeft'] ? -6 : keys['ArrowRight'] ? 6 : 0;
+        if (keys['ArrowUp'] && p1.y === p1.baseY) p1.vy = -14;
         if (keys['Space']) p1.attack('swing');
         if (keys['ArrowDown']) p1.attack('kick');
         if (keys['KeyT']) p1.attack('thrust');
 
-        // CPU AI
+        // CPU AI: Moves toward player then dances around
         const dist = p1.x - cpu.x;
-        cpu.vx = Math.abs(dist) > 80 ? (dist > 0 ? 3 : -3) : 0;
-        if (Math.abs(dist) < 100 && Math.random() > 0.96) cpu.attack('swing');
+        if (Math.abs(dist) > 90) {
+            cpu.vx = dist > 0 ? 3.5 : -3.5;
+        } else {
+            cpu.vx = (Math.random() - 0.5) * 4;
+            if (Math.random() > 0.94) cpu.attack(Math.random() > 0.3 ? 'swing' : 'thrust');
+        }
 
         p1.update(); cpu.update();
         checkHit(p1, cpu); checkHit(cpu, p1);
@@ -215,10 +229,10 @@ function loop() {
         if (p1.hp <= 0 || cpu.hp <= 0) {
             gameState = "END";
             if (p1.hp > 0) p1Wins++; else cpuWins++;
-            scoreEl.innerText = `BOUTS: ${p1Wins} - ${cpuWins}`;
+            scoreEl.innerText = `BOUTS: PLAYER ${p1Wins} - ${cpuWins} COMPUTER`;
             
             if (p1Wins === 2 || cpuWins === 2) {
-                msgEl.innerText = p1Wins === 2 ? "JEDI VICTORIOUS" : "SITH TRIUMPHANT";
+                msgEl.innerText = p1Wins === 2 ? "THE LIGHT PREVAILS" : "THE DARKNESS RISES";
                 if(p1Wins === 2) spawnFireworks();
             } else {
                 msgEl.innerText = "ROUND OVER";
@@ -228,19 +242,17 @@ function loop() {
         }
     }
 
-    // Draw Entities
-    p1.draw(); cpu.draw();
+    p1.draw(cpu); 
+    cpu.draw(p1);
 
-    // UI
     document.getElementById('p1-hp').style.width = p1.hp + "%";
     document.getElementById('p2-hp').style.width = cpu.hp + "%";
 
-    // Particles
     particles.forEach((p, i) => {
-        p.x += p.vx; p.y += p.vy; p.vy += 0.2; p.life -= 0.02;
+        p.x += p.vx; p.y += p.vy; p.vy += 0.25; p.life -= 0.015;
         ctx.fillStyle = p.color;
         ctx.globalAlpha = p.life;
-        ctx.fillRect(p.x, p.y, 5, 5);
+        ctx.fillRect(p.x, p.y, 4, 4);
         if (p.life <= 0) particles.splice(i, 1);
     });
     ctx.globalAlpha = 1;
