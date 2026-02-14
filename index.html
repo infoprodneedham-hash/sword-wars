@@ -11,6 +11,7 @@
         .health-fill { height: 100%; transition: width 0.2s ease-out; box-shadow: 0 0 10px currentColor; }
         #score { position: absolute; top: 70px; width: 100%; text-align: center; color: #aaa; font-size: 1.2rem; letter-spacing: 2px; }
         #msg { position: absolute; top: 40%; width: 100%; text-align: center; color: #fff; font-size: 4rem; display: none; font-weight: bold; text-shadow: 0 0 20px #fff; z-index: 10; }
+        #hint { position: absolute; bottom: 20px; width: 100%; text-align: center; color: #444; font-size: 0.8rem; }
     </style>
 </head>
 <body>
@@ -21,6 +22,7 @@
 </div>
 <div id="score">BOUTS: 0 - 0</div>
 <div id="msg">ROUND 1</div>
+<div id="hint">ARROWS to move/jump/thrust | SPACE to swing</div>
 
 <canvas id="gameCanvas"></canvas>
 
@@ -38,6 +40,39 @@ let cpuWins = 0;
 let gameState = "PLAYING";
 let particles = [];
 
+// --- AUDIO SYSTEM (Procedural Synth) ---
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playClashSound() {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    
+    const osc = audioCtx.createOscillator();
+    const noise = audioCtx.createBufferSource();
+    const gain = audioCtx.createGain();
+    
+    // Create white noise for the "sizzle"
+    const bufferSize = audioCtx.sampleRate * 0.1;
+    const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+    noise.buffer = buffer;
+
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(600, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.1);
+
+    gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+
+    osc.connect(gain);
+    noise.connect(gain);
+    gain.connect(audioCtx.destination);
+
+    osc.start();
+    noise.start();
+    osc.stop(audioCtx.currentTime + 0.1);
+}
+
 class Fighter {
     constructor(x, color, isPlayer) {
         this.x = x;
@@ -52,12 +87,11 @@ class Fighter {
         this.attackType = null;
         this.timer = 0;
         this.history = []; 
+        this.isRetreating = false; // AI Logic
     }
 
     draw(opponent) {
-        // Update facing direction based on opponent position
         this.facing = (opponent.x > this.x) ? 1 : -1;
-
         const headY = this.y - 80;
         const bodyY = this.y - 40;
         
@@ -65,13 +99,9 @@ class Fighter {
         ctx.lineWidth = 4;
         ctx.lineCap = "round";
 
-        // Head
+        // Head & Spine
         ctx.beginPath();
         ctx.arc(this.x, headY, 10, 0, Math.PI * 2);
-        ctx.stroke();
-
-        // Spine
-        ctx.beginPath();
         ctx.moveTo(this.x, headY + 10);
         ctx.lineTo(this.x, this.y - 20);
         ctx.stroke();
@@ -89,28 +119,20 @@ class Fighter {
         let swordEnd = { x: this.x + 40 * this.facing, y: bodyY };
         
         if (this.attackType === 'swing') {
-            // Swing arc adjusted for facing direction
             const progress = (20 - this.timer) / 20; 
             const angle = (progress * Math.PI) - (Math.PI / 2);
             swordEnd.x = this.x + Math.cos(angle) * 80 * this.facing;
             swordEnd.y = (bodyY - 40) + Math.sin(angle) * 80;
         } else if (this.attackType === 'thrust') {
-            const thrustExt = Math.sin((this.timer/20) * Math.PI) * 40;
-            swordEnd.x = this.x + (50 + thrustExt) * this.facing;
+            const thrustExt = Math.sin(((20 - this.timer) / 20) * Math.PI) * 60;
+            swordEnd.x = this.x + (40 + thrustExt) * this.facing;
             swordEnd.y = bodyY;
-        } else if (this.attackType === 'kick') {
-            ctx.strokeStyle = "white";
-            ctx.beginPath();
-            ctx.moveTo(this.x, this.y - 20);
-            ctx.lineTo(this.x + 45 * this.facing, this.y - 35);
-            ctx.stroke();
         }
 
-        // Add to history for trails
+        // Trails
         this.history.push({...swordEnd});
         if (this.history.length > 6) this.history.shift();
 
-        // Draw Trails
         if (this.attackType) {
             ctx.shadowBlur = 0;
             for (let i = 0; i < this.history.length; i++) {
@@ -124,7 +146,7 @@ class Fighter {
             }
         }
 
-        // Draw Main Saber
+        // Main Saber
         ctx.globalAlpha = 1;
         ctx.strokeStyle = "white";
         ctx.lineWidth = 4;
@@ -161,20 +183,25 @@ const p1 = new Fighter(200, "#00ffff", true);
 const cpu = new Fighter(canvas.width - 200, "#ff0000", false);
 const keys = {};
 
-window.onkeydown = e => keys[e.code] = true;
+window.onkeydown = e => {
+    keys[e.code] = true;
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+};
 window.onkeyup = e => keys[e.code] = false;
 
 function checkHit(atkr, vctm) {
     if (atkr.attackType && atkr.timer > 5 && atkr.timer < 18) {
-        const reach = atkr.attackType === 'thrust' ? 90 : 70;
+        const reach = atkr.attackType === 'thrust' ? 110 : 70;
         const dist = Math.abs(atkr.x - vctm.x);
-        
-        // Only hit if facing the enemy
         const isFacingEnemy = (atkr.facing === 1 && vctm.x > atkr.x) || (atkr.facing === -1 && vctm.x < atkr.x);
         
         if (isFacingEnemy && dist < reach && Math.abs(atkr.y - vctm.y) < 100) {
-            vctm.hp -= 0.8; // Per frame damage during the active window
-            vctm.x += atkr.facing * 3; 
+            vctm.hp -= 0.8;
+            vctm.x += atkr.facing * 4; // Knockback force
+            
+            // Sound and AI reaction
+            if (atkr.timer === 17) playClashSound();
+            if (!vctm.isPlayer) vctm.isRetreating = true; 
         }
     }
 }
@@ -201,8 +228,8 @@ function loop() {
     ctx.fillStyle = "#050505";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     
-    // Background details
-    ctx.strokeStyle = "#1a1a1a";
+    // Background Grid
+    ctx.strokeStyle = "#111";
     ctx.lineWidth = 2;
     for(let i=0; i<canvas.width; i+=120) ctx.strokeRect(i, 0, 120, canvas.height);
 
@@ -211,16 +238,26 @@ function loop() {
         p1.vx = keys['ArrowLeft'] ? -6 : keys['ArrowRight'] ? 6 : 0;
         if (keys['ArrowUp'] && p1.y === p1.baseY) p1.vy = -14;
         if (keys['Space']) p1.attack('swing');
-        if (keys['ArrowDown']) p1.attack('kick');
-        if (keys['KeyT']) p1.attack('thrust');
+        if (keys['ArrowDown']) p1.attack('thrust');
 
-        // CPU AI: Moves toward player then dances around
-        const dist = p1.x - cpu.x;
-        if (Math.abs(dist) > 90) {
-            cpu.vx = dist > 0 ? 3.5 : -3.5;
+        // CPU AI Logic
+        const distToPlayer = p1.x - cpu.x;
+        const absDist = Math.abs(distToPlayer);
+
+        if (cpu.isRetreating) {
+            // Move away from player
+            cpu.vx = distToPlayer > 0 ? -5 : 5;
+            if (absDist > 220) cpu.isRetreating = false;
+        } else if (absDist > 120) {
+            // Approach player
+            cpu.vx = distToPlayer > 0 ? 3.5 : -3.5;
         } else {
+            // Combat range behavior
             cpu.vx = (Math.random() - 0.5) * 4;
-            if (Math.random() > 0.94) cpu.attack(Math.random() > 0.3 ? 'swing' : 'thrust');
+            if (Math.random() > 0.95) cpu.attack(Math.random() > 0.4 ? 'swing' : 'thrust');
+            
+            // Retreat if player is spamming attacks
+            if (p1.attackType && Math.random() > 0.92) cpu.isRetreating = true;
         }
 
         p1.update(); cpu.update();
